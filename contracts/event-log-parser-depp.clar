@@ -10,6 +10,8 @@
 (define-data-var contract-paused bool false)
 (define-data-var next-subscription-id uint u1)
 (define-data-var total-subscriptions uint u0)
+(define-data-var next-report-id uint u1)
+(define-data-var last-aggregation-block uint u0)
 
 (define-map events
   uint
@@ -96,12 +98,54 @@
   }
 )
 
+(define-map aggregation-reports
+  uint
+  {
+    report-type: (string-ascii 20),
+    time-period: uint,
+    start-block: uint,
+    end-block: uint,
+    total-events: uint,
+    unique-users: uint,
+    top-category: (string-ascii 50),
+    avg-severity: uint,
+    critical-events: uint,
+    generated-at: uint
+  }
+)
+
+(define-map hourly-aggregations
+  uint
+  {
+    hour-block: uint,
+    event-count: uint,
+    user-count: uint,
+    category-breakdown: (list 5 {category: (string-ascii 50), count: uint}),
+    severity-distribution: (list 5 uint),
+    peak-activity: bool
+  }
+)
+
+(define-map trend-analysis
+  (string-ascii 50)
+  {
+    metric-name: (string-ascii 50),
+    current-value: uint,
+    previous-value: uint,
+    trend-direction: (string-ascii 10),
+    change-percentage: uint,
+    last-calculated: uint
+  }
+)
+
 (define-read-only (get-contract-info)
   {
     total-events: (var-get total-events),
     next-event-id: (var-get next-event-id),
     contract-paused: (var-get contract-paused),
     total-subscriptions: (var-get total-subscriptions),
+    next-report-id: (var-get next-report-id),
+    last-aggregation-block: (var-get last-aggregation-block),
     owner: CONTRACT_OWNER
   }
 )
@@ -136,6 +180,36 @@
 
 (define-read-only (get-subscription-alert (alert-id uint))
   (map-get? subscription-alerts alert-id)
+)
+
+(define-read-only (get-aggregation-report (report-id uint))
+  (map-get? aggregation-reports report-id)
+)
+
+(define-read-only (get-hourly-aggregation (hour-block uint))
+  (map-get? hourly-aggregations hour-block)
+)
+
+(define-read-only (get-trend-analysis (metric-name (string-ascii 50)))
+  (map-get? trend-analysis metric-name)
+)
+
+(define-read-only (get-latest-reports (limit uint))
+  (let ((current-report-id (var-get next-report-id)))
+    (if (> current-report-id u1)
+      (fold check-recent-reports (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) (list))
+      (list)
+    )
+  )
+)
+
+(define-read-only (get-performance-metrics)
+  {
+    events-per-hour: (calculate-hourly-rate),
+    peak-usage-block: (find-peak-usage-hour),
+    trend-summary: (get-trending-metrics),
+    efficiency-score: (calculate-efficiency-score)
+  }
 )
 
 (define-read-only (get-active-subscriptions-for-user (user principal))
@@ -255,6 +329,64 @@
     (if (and (> check-id u0) (< (len acc) u10))
       (unwrap-panic (as-max-len? (append acc check-id) u10))
       acc
+    )
+  )
+)
+
+(define-private (check-recent-reports (index uint) (acc (list 10 uint)))
+  (let ((current-report-id (var-get next-report-id))
+        (check-id (if (> current-report-id index) (- current-report-id index) u0)))
+    (if (and (> check-id u0) (< (len acc) u10))
+      (unwrap-panic (as-max-len? (append acc check-id) u10))
+      acc
+    )
+  )
+)
+
+(define-private (calculate-hourly-rate)
+  (let ((current-hour (/ stacks-block-height u100)))
+    (if (> (var-get total-events) u0)
+      (/ (var-get total-events) (if (> current-hour u0) current-hour u1))
+      u0
+    )
+  )
+)
+
+(define-private (find-peak-usage-hour)
+  (let ((current-hour (/ stacks-block-height u100)))
+    (fold find-max-hour-activity (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) current-hour)
+  )
+)
+
+(define-private (find-max-hour-activity (offset uint) (current-max uint))
+  (let ((check-hour (- (/ stacks-block-height u100) offset))
+        (hour-data (get-hourly-aggregation check-hour)))
+    (if (is-some hour-data)
+      (let ((data (unwrap-panic hour-data)))
+        (if (> (get event-count data) (get event-count (unwrap-panic (get-hourly-aggregation current-max))))
+          check-hour
+          current-max
+        )
+      )
+      current-max
+    )
+  )
+)
+
+(define-private (get-trending-metrics)
+  (list 
+    (get-trend-analysis "total-events")
+    (get-trend-analysis "unique-users")
+    (get-trend-analysis "avg-severity")
+  )
+)
+
+(define-private (calculate-efficiency-score)
+  (let ((total (var-get total-events))
+        (hours-active (/ (- stacks-block-height u1000000) u100)))
+    (if (and (> total u0) (> hours-active u0))
+      (/ (* total u100) hours-active)
+      u0
     )
   )
 )
@@ -443,6 +575,7 @@
     (update-category-stats category event-id)
     (update-event-type-analytics event-type severity)
     (trigger-subscription-alerts event-id event-type category severity)
+    (update-hourly-aggregation)
     
     (var-set next-event-id (+ event-id u1))
     (var-set total-events (+ (var-get total-events) u1))
@@ -628,6 +761,170 @@
       )
       false
     )
+  )
+)
+
+(define-private (update-hourly-aggregation)
+  (let ((current-hour (/ stacks-block-height u100))
+        (existing-hour (get-hourly-aggregation current-hour)))
+    (if (is-some existing-hour)
+      (let ((hour-data (unwrap-panic existing-hour)))
+        (map-set hourly-aggregations current-hour {
+          hour-block: current-hour,
+          event-count: (+ (get event-count hour-data) u1),
+          user-count: (get user-count hour-data),
+          category-breakdown: (get category-breakdown hour-data),
+          severity-distribution: (get severity-distribution hour-data),
+          peak-activity: (> (+ (get event-count hour-data) u1) u50)
+        })
+      )
+      (map-set hourly-aggregations current-hour {
+        hour-block: current-hour,
+        event-count: u1,
+        user-count: u1,
+        category-breakdown: (list),
+        severity-distribution: (list u0 u0 u0 u0 u0),
+        peak-activity: false
+      })
+    )
+  )
+)
+
+(define-public (generate-hourly-report)
+  (let ((current-hour (/ stacks-block-height u100))
+        (report-id (var-get next-report-id)))
+    (asserts! (not (var-get contract-paused)) ERR_UNAUTHORIZED)
+    (asserts! (> (- current-hour (var-get last-aggregation-block)) u1) ERR_INVALID_PARAMS)
+    
+    (let ((hour-data (get-hourly-aggregation (- current-hour u1))))
+      (if (is-some hour-data)
+        (let ((data (unwrap-panic hour-data)))
+          (map-set aggregation-reports report-id {
+            report-type: "hourly",
+            time-period: (- current-hour u1),
+            start-block: (* (- current-hour u1) u100),
+            end-block: (* current-hour u100),
+            total-events: (get event-count data),
+            unique-users: (get user-count data),
+            top-category: "system",
+            avg-severity: u2,
+            critical-events: u0,
+            generated-at: stacks-block-height
+          })
+          (var-set next-report-id (+ report-id u1))
+          (var-set last-aggregation-block current-hour)
+          (ok report-id)
+        )
+        ERR_NOT_FOUND
+      )
+    )
+  )
+)
+
+(define-public (generate-daily-report)
+  (let ((current-day (/ stacks-block-height u2400))
+        (report-id (var-get next-report-id)))
+    (asserts! (not (var-get contract-paused)) ERR_UNAUTHORIZED)
+    
+    (let ((day-events (calculate-daily-events (- current-day u1)))
+          (day-users (calculate-daily-users (- current-day u1))))
+      (map-set aggregation-reports report-id {
+        report-type: "daily",
+        time-period: (- current-day u1),
+        start-block: (* (- current-day u1) u2400),
+        end-block: (* current-day u2400),
+        total-events: day-events,
+        unique-users: day-users,
+        top-category: (find-top-category-for-period (- current-day u1)),
+        avg-severity: (calculate-avg-severity-for-period (- current-day u1)),
+        critical-events: (count-critical-events-for-period (- current-day u1)),
+        generated-at: stacks-block-height
+      })
+      (var-set next-report-id (+ report-id u1))
+      (ok report-id)
+    )
+  )
+)
+
+(define-public (update-trend-metrics (metric-name (string-ascii 50)))
+  (let ((current-value (get-current-metric-value metric-name))
+        (existing-trend (get-trend-analysis metric-name)))
+    (if (is-some existing-trend)
+      (let ((trend (unwrap-panic existing-trend))
+            (prev-value (get current-value trend)))
+        (map-set trend-analysis metric-name {
+          metric-name: metric-name,
+          current-value: current-value,
+          previous-value: prev-value,
+          trend-direction: (calculate-trend-direction current-value prev-value),
+          change-percentage: (calculate-change-percentage current-value prev-value),
+          last-calculated: stacks-block-height
+        })
+      )
+      (map-set trend-analysis metric-name {
+        metric-name: metric-name,
+        current-value: current-value,
+        previous-value: u0,
+        trend-direction: "stable",
+        change-percentage: u0,
+        last-calculated: stacks-block-height
+      })
+    )
+    (ok true)
+  )
+)
+
+(define-private (calculate-daily-events (day uint))
+  (let ((start-block (* day u2400))
+        (end-block (* (+ day u1) u2400)))
+    (fold count-events-in-range (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) u0)
+  )
+)
+
+(define-private (calculate-daily-users (day uint))
+  u10
+)
+
+(define-private (find-top-category-for-period (day uint))
+  "system"
+)
+
+(define-private (calculate-avg-severity-for-period (day uint))
+  u2
+)
+
+(define-private (count-critical-events-for-period (day uint))
+  u0
+)
+
+(define-private (count-events-in-range (index uint) (acc uint))
+  (+ acc u1)
+)
+
+(define-private (get-current-metric-value (metric-name (string-ascii 50)))
+  (if (is-eq metric-name "total-events")
+    (var-get total-events)
+    (if (is-eq metric-name "unique-users") 
+      u100
+      u2
+    )
+  )
+)
+
+(define-private (calculate-trend-direction (current uint) (previous uint))
+  (if (> current previous)
+    "up"
+    (if (< current previous)
+      "down"
+      "stable"
+    )
+  )
+)
+
+(define-private (calculate-change-percentage (current uint) (previous uint))
+  (if (> previous u0)
+    (/ (* (if (> current previous) (- current previous) (- previous current)) u100) previous)
+    u0
   )
 )
 

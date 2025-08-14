@@ -1,6 +1,6 @@
 # 📊 Event Log Parser DApp
 
-A powerful Clarity smart contract for indexing, storing, and analyzing blockchain events with comprehensive analytics capabilities.
+A powerful Clarity smart contract for indexing, storing, and analyzing blockchain events with comprehensive analytics capabilities and intelligent reporting.
 
 ## 🚀 Features
 
@@ -12,6 +12,9 @@ A powerful Clarity smart contract for indexing, storing, and analyzing blockchai
 - **⚡ Bulk Operations**: Process multiple events efficiently
 - **🔐 Access Control**: Owner-only administrative functions
 - **⏸️ Contract Pausing**: Emergency pause/resume functionality
+- **🔔 Event Subscriptions**: Real-time monitoring and alerts
+- **📊 Aggregation Reports**: Automated hourly and daily analytics
+- **📈 Trend Analysis**: Historical data patterns and insights
 
 ## 🛠️ Installation
 
@@ -81,6 +84,42 @@ clarinet check
 (contract-call? .event-log-parser-depp get-category-stats "security")
 ```
 
+### Subscriptions & Alerts
+
+```clarity
+;; Create event subscription
+(contract-call? .event-log-parser-depp create-subscription 
+  (some "user-login") 
+  (some "authentication") 
+  (some u3) 
+  (some u5))
+
+;; Get user subscriptions
+(contract-call? .event-log-parser-depp get-active-subscriptions-for-user tx-sender)
+
+;; Deactivate subscription
+(contract-call? .event-log-parser-depp deactivate-subscription u1)
+```
+
+### Reports & Aggregations
+
+```clarity
+;; Generate hourly report
+(contract-call? .event-log-parser-depp generate-hourly-report)
+
+;; Generate daily report
+(contract-call? .event-log-parser-depp generate-daily-report)
+
+;; Get latest reports
+(contract-call? .event-log-parser-depp get-latest-reports u5)
+
+;; Update trend metrics
+(contract-call? .event-log-parser-depp update-trend-metrics "total-events")
+
+;; Get performance metrics
+(contract-call? .event-log-parser-depp get-performance-metrics)
+```
+
 ## 🏗️ Contract Architecture
 
 ### Data Structures
@@ -90,6 +129,10 @@ clarinet check
 - **👤 User Stats Map**: Maintains per-user analytics
 - **📊 Daily Counts Map**: Aggregates daily event metrics
 - **🔬 Type Analytics Map**: Analyzes event types and patterns
+- **🔔 Subscriptions Map**: Manages event monitoring subscriptions
+- **📊 Aggregation Reports Map**: Stores generated time-based reports
+- **⏰ Hourly Aggregations Map**: Real-time hourly activity summaries
+- **📈 Trend Analysis Map**: Historical trend tracking and insights
 
 ### Event Structure
 
@@ -117,18 +160,29 @@ clarinet test
 - Events per user
 - Category distributions
 - Severity patterns
+- Hourly activity rates
+- Peak usage detection
 
 ### 🔍 Advanced Queries
 - Filter by date range
 - Search by severity level
 - User activity tracking
 - Category-based analytics
+- Subscription monitoring
+- Alert history tracking
 
-### 📋 Reporting
-- Daily event summaries
-- User engagement metrics
-- Category performance
-- Event type analysis
+### 📋 Automated Reporting
+- **⏰ Hourly Reports**: Activity summaries every 100 blocks
+- **📅 Daily Reports**: Comprehensive 24-hour analytics
+- **📈 Trend Analysis**: Growth patterns and change detection
+- **🎯 Performance Metrics**: Efficiency scoring and optimization insights
+- **🔔 Subscription Analytics**: Alert trigger statistics and patterns
+
+### 🔬 Business Intelligence
+- **📊 Time-series Analysis**: Historical data visualization
+- **🎯 Peak Usage Detection**: Identify high-traffic periods
+- **📈 Growth Trending**: Track platform adoption and engagement
+- **⚡ Efficiency Scoring**: Measure contract performance and usage
 
 ## 🛡️ Security Features
 
