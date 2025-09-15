@@ -15,6 +15,8 @@ A powerful Clarity smart contract for indexing, storing, and analyzing blockchai
 - **🔔 Event Subscriptions**: Real-time monitoring and alerts
 - **📊 Aggregation Reports**: Automated hourly and daily analytics
 - **📈 Trend Analysis**: Historical data patterns and insights
+- **🛡️ Schema Validation**: Type-safe event validation with custom schemas
+- **✅ Data Quality**: Automatic validation and error tracking
 
 ## 🛠️ Installation
 
@@ -120,6 +122,37 @@ clarinet check
 (contract-call? .event-log-parser-depp get-performance-metrics)
 ```
 
+### Schema Validation
+
+```clarity
+;; Create event schema
+(contract-call? .event-log-parser-depp create-event-schema 
+  "user-action" 
+  (list "action" "user_id") 
+  (list "string" "uint") 
+  u10 
+  u200 
+  (list "user" "system") 
+  u1 
+  u3)
+
+;; Get event schema
+(contract-call? .event-log-parser-depp get-event-schema "user-action")
+
+;; Validate event before logging
+(contract-call? .event-log-parser-depp validate-event-against-schema 
+  "user-action" 
+  "User clicked button" 
+  "user" 
+  u2)
+
+;; Get validation result for event
+(contract-call? .event-log-parser-depp get-schema-validation u1)
+
+;; Toggle schema validation
+(contract-call? .event-log-parser-depp toggle-schema-validation)
+```
+
 ## 🏗️ Contract Architecture
 
 ### Data Structures
@@ -133,6 +166,8 @@ clarinet check
 - **📊 Aggregation Reports Map**: Stores generated time-based reports
 - **⏰ Hourly Aggregations Map**: Real-time hourly activity summaries
 - **📈 Trend Analysis Map**: Historical trend tracking and insights
+- **🛡️ Event Schemas Map**: Defines validation rules for event types
+- **✅ Schema Validations Map**: Tracks validation results and errors
 
 ### Event Structure
 
@@ -183,6 +218,27 @@ clarinet test
 - **🎯 Peak Usage Detection**: Identify high-traffic periods
 - **📈 Growth Trending**: Track platform adoption and engagement
 - **⚡ Efficiency Scoring**: Measure contract performance and usage
+
+## 🛡️ Data Validation & Quality
+
+### 📋 Schema Definition
+- **🎯 Type Safety**: Define required fields and data types
+- **📏 Length Constraints**: Min/max data length validation
+- **🏷️ Category Restrictions**: Whitelist allowed categories
+- **⚖️ Severity Bounds**: Configure acceptable severity ranges
+- **🔄 Schema Versioning**: Track schema evolution over time
+
+### ✅ Automatic Validation
+- **🔍 Pre-logging Checks**: Events validated before storage
+- **📊 Validation Tracking**: Complete audit trail of validation results
+- **🚫 Invalid Event Blocking**: Malformed events rejected automatically
+- **📈 Quality Metrics**: Track validation success rates and error patterns
+
+### 🔧 Schema Management
+- **👑 Owner Controls**: Admin-only schema creation and updates
+- **⚡ Runtime Toggle**: Enable/disable validation without downtime
+- **🎛️ Flexible Updates**: Modify constraints without recreation
+- **🗑️ Schema Cleanup**: Remove obsolete schemas safely
 
 ## 🛡️ Security Features
 

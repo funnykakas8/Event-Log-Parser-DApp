@@ -4,6 +4,9 @@
 (define-constant ERR_INVALID_PARAMS (err u400))
 (define-constant ERR_ALREADY_EXISTS (err u409))
 (define-constant ERR_SUBSCRIPTION_LIMIT (err u429))
+(define-constant ERR_SCHEMA_NOT_FOUND (err u430))
+(define-constant ERR_VALIDATION_FAILED (err u431))
+(define-constant ERR_SCHEMA_EXISTS (err u432))
 
 (define-data-var next-event-id uint u1)
 (define-data-var total-events uint u0)
@@ -12,6 +15,8 @@
 (define-data-var total-subscriptions uint u0)
 (define-data-var next-report-id uint u1)
 (define-data-var last-aggregation-block uint u0)
+(define-data-var next-schema-id uint u1)
+(define-data-var schema-validation-enabled bool true)
 
 (define-map events
   uint
@@ -138,6 +143,36 @@
   }
 )
 
+(define-map event-schemas
+  (string-ascii 50)
+  {
+    schema-id: uint,
+    event-type: (string-ascii 50),
+    required-fields: (list 5 (string-ascii 30)),
+    field-types: (list 5 (string-ascii 20)),
+    min-data-length: uint,
+    max-data-length: uint,
+    allowed-categories: (list 10 (string-ascii 50)),
+    min-severity: uint,
+    max-severity: uint,
+    active: bool,
+    created-by: principal,
+    created-at: uint,
+    version: uint
+  }
+)
+
+(define-map schema-validations
+  uint
+  {
+    event-id: uint,
+    schema-used: (string-ascii 50),
+    validation-passed: bool,
+    validation-errors: (list 5 (string-ascii 100)),
+    validated-at: uint
+  }
+)
+
 (define-read-only (get-contract-info)
   {
     total-events: (var-get total-events),
@@ -146,6 +181,8 @@
     total-subscriptions: (var-get total-subscriptions),
     next-report-id: (var-get next-report-id),
     last-aggregation-block: (var-get last-aggregation-block),
+    next-schema-id: (var-get next-schema-id),
+    schema-validation-enabled: (var-get schema-validation-enabled),
     owner: CONTRACT_OWNER
   }
 )
@@ -192,6 +229,43 @@
 
 (define-read-only (get-trend-analysis (metric-name (string-ascii 50)))
   (map-get? trend-analysis metric-name)
+)
+
+(define-read-only (get-event-schema (event-type (string-ascii 50)))
+  (map-get? event-schemas event-type)
+)
+
+(define-read-only (get-schema-validation (event-id uint))
+  (map-get? schema-validations event-id)
+)
+
+(define-read-only (get-all-schemas)
+  (list 
+    (get-event-schema "user-action")
+    (get-event-schema "system-event")
+    (get-event-schema "transaction")
+    (get-event-schema "security-alert")
+    (get-event-schema "error-log")
+  )
+)
+
+(define-read-only (validate-event-against-schema (event-type (string-ascii 50)) (data (string-ascii 500)) (category (string-ascii 50)) (severity uint))
+  (let ((schema (get-event-schema event-type)))
+    (if (is-some schema)
+      (let ((schema-data (unwrap-panic schema)))
+        {
+          has-schema: true,
+          validation-result: (perform-schema-validation schema-data data category severity),
+          schema-active: (get active schema-data)
+        }
+      )
+      {
+        has-schema: false,
+        validation-result: false,
+        schema-active: false
+      }
+    )
+  )
 )
 
 (define-read-only (get-latest-reports (limit uint))
@@ -381,6 +455,46 @@
   )
 )
 
+(define-private (perform-schema-validation (schema {schema-id: uint, event-type: (string-ascii 50), required-fields: (list 5 (string-ascii 30)), field-types: (list 5 (string-ascii 20)), min-data-length: uint, max-data-length: uint, allowed-categories: (list 10 (string-ascii 50)), min-severity: uint, max-severity: uint, active: bool, created-by: principal, created-at: uint, version: uint}) (data (string-ascii 500)) (category (string-ascii 50)) (severity uint))
+  (and
+    (get active schema)
+    (>= (len data) (get min-data-length schema))
+    (<= (len data) (get max-data-length schema))
+    (>= severity (get min-severity schema))
+    (<= severity (get max-severity schema))
+    (is-category-allowed category (get allowed-categories schema))
+  )
+)
+
+(define-private (is-category-allowed (category (string-ascii 50)) (allowed-categories (list 10 (string-ascii 50))))
+  (or 
+    (is-eq (len allowed-categories) u0)
+    (is-some (index-of allowed-categories category))
+  )
+)
+
+(define-private (validate-event-data (event-type (string-ascii 50)) (data (string-ascii 500)) (category (string-ascii 50)) (severity uint))
+  (if (var-get schema-validation-enabled)
+    (let ((schema (get-event-schema event-type)))
+      (if (is-some schema)
+        (perform-schema-validation (unwrap-panic schema) data category severity)
+        true
+      )
+    )
+    true
+  )
+)
+
+(define-private (record-validation-result (event-id uint) (event-type (string-ascii 50)) (validation-passed bool) (errors (list 5 (string-ascii 100))))
+  (map-set schema-validations event-id {
+    event-id: event-id,
+    schema-used: event-type,
+    validation-passed: validation-passed,
+    validation-errors: errors,
+    validated-at: stacks-block-height
+  })
+)
+
 (define-private (calculate-efficiency-score)
   (let ((total (var-get total-events))
         (hours-active (/ (- stacks-block-height u1000000) u100)))
@@ -554,11 +668,13 @@
 )
 
 (define-public (log-event (event-type (string-ascii 50)) (data (string-ascii 500)) (category (string-ascii 50)) (severity uint))
-  (let ((event-id (var-get next-event-id)))
+  (let ((event-id (var-get next-event-id))
+        (validation-passed (validate-event-data event-type data category severity)))
     (asserts! (not (var-get contract-paused)) ERR_UNAUTHORIZED)
     (asserts! (and (> severity u0) (<= severity u5)) ERR_INVALID_PARAMS)
     (asserts! (> (len event-type) u0) ERR_INVALID_PARAMS)
     (asserts! (> (len category) u0) ERR_INVALID_PARAMS)
+    (asserts! validation-passed ERR_VALIDATION_FAILED)
     
     (map-set events event-id {
       event-type: event-type,
@@ -576,6 +692,7 @@
     (update-event-type-analytics event-type severity)
     (trigger-subscription-alerts event-id event-type category severity)
     (update-hourly-aggregation)
+    (record-validation-result event-id event-type validation-passed (list))
     
     (var-set next-event-id (+ event-id u1))
     (var-set total-events (+ (var-get total-events) u1))
@@ -940,5 +1057,97 @@
       
       (ok true)
     )
+  )
+)
+
+(define-public (create-event-schema (event-type (string-ascii 50)) (required-fields (list 5 (string-ascii 30))) (field-types (list 5 (string-ascii 20))) (min-data-length uint) (max-data-length uint) (allowed-categories (list 10 (string-ascii 50))) (min-severity uint) (max-severity uint))
+  (let ((schema-id (var-get next-schema-id))
+        (existing-schema (get-event-schema event-type)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (is-none existing-schema) ERR_SCHEMA_EXISTS)
+    (asserts! (> (len event-type) u0) ERR_INVALID_PARAMS)
+    (asserts! (and (>= min-severity u1) (<= max-severity u5) (<= min-severity max-severity)) ERR_INVALID_PARAMS)
+    (asserts! (<= min-data-length max-data-length) ERR_INVALID_PARAMS)
+    
+    (map-set event-schemas event-type {
+      schema-id: schema-id,
+      event-type: event-type,
+      required-fields: required-fields,
+      field-types: field-types,
+      min-data-length: min-data-length,
+      max-data-length: max-data-length,
+      allowed-categories: allowed-categories,
+      min-severity: min-severity,
+      max-severity: max-severity,
+      active: true,
+      created-by: tx-sender,
+      created-at: stacks-block-height,
+      version: u1
+    })
+    
+    (var-set next-schema-id (+ schema-id u1))
+    (ok schema-id)
+  )
+)
+
+(define-public (update-event-schema (event-type (string-ascii 50)) (min-data-length uint) (max-data-length uint) (min-severity uint) (max-severity uint))
+  (let ((existing-schema (get-event-schema event-type)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (is-some existing-schema) ERR_SCHEMA_NOT_FOUND)
+    (asserts! (and (>= min-severity u1) (<= max-severity u5) (<= min-severity max-severity)) ERR_INVALID_PARAMS)
+    (asserts! (<= min-data-length max-data-length) ERR_INVALID_PARAMS)
+    
+    (let ((schema (unwrap-panic existing-schema)))
+      (map-set event-schemas event-type (merge schema {
+        min-data-length: min-data-length,
+        max-data-length: max-data-length,
+        min-severity: min-severity,
+        max-severity: max-severity,
+        version: (+ (get version schema) u1)
+      }))
+    )
+    (ok true)
+  )
+)
+
+(define-public (activate-schema (event-type (string-ascii 50)))
+  (let ((existing-schema (get-event-schema event-type)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (is-some existing-schema) ERR_SCHEMA_NOT_FOUND)
+    
+    (let ((schema (unwrap-panic existing-schema)))
+      (map-set event-schemas event-type (merge schema {active: true}))
+    )
+    (ok true)
+  )
+)
+
+(define-public (deactivate-schema (event-type (string-ascii 50)))
+  (let ((existing-schema (get-event-schema event-type)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (is-some existing-schema) ERR_SCHEMA_NOT_FOUND)
+    
+    (let ((schema (unwrap-panic existing-schema)))
+      (map-set event-schemas event-type (merge schema {active: false}))
+    )
+    (ok true)
+  )
+)
+
+(define-public (toggle-schema-validation)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (var-set schema-validation-enabled (not (var-get schema-validation-enabled)))
+    (ok (var-get schema-validation-enabled))
+  )
+)
+
+(define-public (delete-schema (event-type (string-ascii 50)))
+  (let ((existing-schema (get-event-schema event-type)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (is-some existing-schema) ERR_SCHEMA_NOT_FOUND)
+    
+    (map-delete event-schemas event-type)
+    (ok true)
   )
 )
