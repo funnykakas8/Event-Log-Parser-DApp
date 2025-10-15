@@ -7,6 +7,9 @@
 (define-constant ERR_SCHEMA_NOT_FOUND (err u430))
 (define-constant ERR_VALIDATION_FAILED (err u431))
 (define-constant ERR_SCHEMA_EXISTS (err u432))
+(define-constant ERR_TAG_LIMIT (err u433))
+(define-constant ERR_TAG_NOT_FOUND (err u434))
+(define-constant ERR_TAG_EXISTS (err u435))
 
 (define-data-var next-event-id uint u1)
 (define-data-var total-events uint u0)
@@ -17,6 +20,8 @@
 (define-data-var last-aggregation-block uint u0)
 (define-data-var next-schema-id uint u1)
 (define-data-var schema-validation-enabled bool true)
+(define-data-var next-tag-id uint u1)
+(define-data-var total-tags uint u0)
 
 (define-map events
   uint
@@ -173,6 +178,61 @@
   }
 )
 
+(define-map tags
+  uint
+  {
+    tag-id: uint,
+    tag-name: (string-ascii 50),
+    tag-color: (string-ascii 20),
+    description: (string-ascii 200),
+    created-by: principal,
+    created-at: uint,
+    usage-count: uint,
+    active: bool
+  }
+)
+
+(define-map tag-names
+  (string-ascii 50)
+  uint
+)
+
+(define-map event-tags
+  {event-id: uint, tag-id: uint}
+  {
+    tagged-by: principal,
+    tagged-at: uint,
+    weight: uint
+  }
+)
+
+(define-map event-tag-list
+  uint
+  {
+    tags: (list 10 uint),
+    tag-count: uint,
+    last-tagged: uint
+  }
+)
+
+(define-map tag-events
+  uint
+  {
+    event-ids: (list 20 uint),
+    event-count: uint,
+    last-event: uint
+  }
+)
+
+(define-map user-tags
+  principal
+  {
+    created-tags: (list 20 uint),
+    total-created: uint,
+    last-created: uint
+  }
+)
+
 (define-read-only (get-contract-info)
   {
     total-events: (var-get total-events),
@@ -183,6 +243,8 @@
     last-aggregation-block: (var-get last-aggregation-block),
     next-schema-id: (var-get next-schema-id),
     schema-validation-enabled: (var-get schema-validation-enabled),
+    next-tag-id: (var-get next-tag-id),
+    total-tags: (var-get total-tags),
     owner: CONTRACT_OWNER
   }
 )
@@ -237,6 +299,48 @@
 
 (define-read-only (get-schema-validation (event-id uint))
   (map-get? schema-validations event-id)
+)
+
+(define-read-only (get-tag (tag-id uint))
+  (map-get? tags tag-id)
+)
+
+(define-read-only (get-tag-by-name (tag-name (string-ascii 50)))
+  (let ((tag-id-opt (map-get? tag-names tag-name)))
+    (if (is-some tag-id-opt)
+      (get-tag (unwrap-panic tag-id-opt))
+      none
+    )
+  )
+)
+
+(define-read-only (get-event-tags (event-id uint))
+  (map-get? event-tag-list event-id)
+)
+
+(define-read-only (get-tag-events (tag-id uint))
+  (map-get? tag-events tag-id)
+)
+
+(define-read-only (get-user-tags (user principal))
+  (map-get? user-tags user)
+)
+
+(define-read-only (is-event-tagged (event-id uint) (tag-id uint))
+  (is-some (map-get? event-tags {event-id: event-id, tag-id: tag-id}))
+)
+
+(define-read-only (get-popular-tags (limit uint))
+  (fold check-popular-tags (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) (list))
+)
+
+(define-read-only (search-events-by-tag (tag-id uint))
+  (let ((tag-event-data (get-tag-events tag-id)))
+    (if (is-some tag-event-data)
+      (get event-ids (unwrap-panic tag-event-data))
+      (list)
+    )
+  )
 )
 
 (define-read-only (get-all-schemas)
@@ -482,6 +586,38 @@
       )
     )
     true
+  )
+)
+
+(define-private (check-popular-tags (index uint) (acc (list 10 uint)))
+  (let ((tag-id (if (<= index (var-get next-tag-id)) index u0)))
+    (if (and (> tag-id u0) (< (len acc) u10))
+      (let ((tag-data (get-tag tag-id)))
+        (if (is-some tag-data)
+          (let ((tag (unwrap-panic tag-data)))
+            (if (get active tag)
+              (unwrap-panic (as-max-len? (append acc tag-id) u10))
+              acc
+            )
+          )
+          acc
+        )
+      )
+      acc
+    )
+  )
+)
+
+(define-private (update-tag-usage-count (tag-id uint))
+  (let ((tag-data (get-tag tag-id)))
+    (if (is-some tag-data)
+      (let ((tag (unwrap-panic tag-data)))
+        (map-set tags tag-id (merge tag {
+          usage-count: (+ (get usage-count tag) u1)
+        }))
+      )
+      false
+    )
   )
 )
 
@@ -1149,5 +1285,168 @@
     
     (map-delete event-schemas event-type)
     (ok true)
+  )
+)
+
+(define-public (create-tag (tag-name (string-ascii 50)) (tag-color (string-ascii 20)) (description (string-ascii 200)))
+  (let ((tag-id (var-get next-tag-id))
+        (existing-tag (map-get? tag-names tag-name))
+        (user-tag-data (get-user-tags tx-sender)))
+    (asserts! (is-none existing-tag) ERR_TAG_EXISTS)
+    (asserts! (> (len tag-name) u0) ERR_INVALID_PARAMS)
+    (asserts! (if (is-some user-tag-data)
+                (< (get total-created (unwrap-panic user-tag-data)) u20)
+                true) ERR_TAG_LIMIT)
+    
+    (map-set tags tag-id {
+      tag-id: tag-id,
+      tag-name: tag-name,
+      tag-color: tag-color,
+      description: description,
+      created-by: tx-sender,
+      created-at: stacks-block-height,
+      usage-count: u0,
+      active: true
+    })
+    
+    (map-set tag-names tag-name tag-id)
+    (update-user-tag-list tx-sender tag-id)
+    
+    (var-set next-tag-id (+ tag-id u1))
+    (var-set total-tags (+ (var-get total-tags) u1))
+    
+    (ok tag-id)
+  )
+)
+
+(define-private (update-user-tag-list (user principal) (tag-id uint))
+  (let ((existing-tags (get-user-tags user)))
+    (if (is-some existing-tags)
+      (let ((user-tag-data (unwrap-panic existing-tags)))
+        (map-set user-tags user {
+          created-tags: (unwrap-panic (as-max-len? (append (get created-tags user-tag-data) tag-id) u20)),
+          total-created: (+ (get total-created user-tag-data) u1),
+          last-created: stacks-block-height
+        })
+      )
+      (map-set user-tags user {
+        created-tags: (list tag-id),
+        total-created: u1,
+        last-created: stacks-block-height
+      })
+    )
+  )
+)
+
+(define-public (tag-event (event-id uint) (tag-id uint) (weight uint))
+  (let ((event-data (get-event event-id))
+        (tag-data (get-tag tag-id))
+        (event-tag-data (get-event-tags event-id)))
+    (asserts! (is-some event-data) ERR_NOT_FOUND)
+    (asserts! (is-some tag-data) ERR_TAG_NOT_FOUND)
+    (asserts! (not (is-event-tagged event-id tag-id)) ERR_ALREADY_EXISTS)
+    (asserts! (and (>= weight u1) (<= weight u5)) ERR_INVALID_PARAMS)
+    (asserts! (if (is-some event-tag-data)
+                (< (get tag-count (unwrap-panic event-tag-data)) u10)
+                true) ERR_TAG_LIMIT)
+    
+    (map-set event-tags {event-id: event-id, tag-id: tag-id} {
+      tagged-by: tx-sender,
+      tagged-at: stacks-block-height,
+      weight: weight
+    })
+    
+    (update-event-tag-list event-id tag-id)
+    (update-tag-event-list tag-id event-id)
+    (update-tag-usage-count tag-id)
+    
+    (ok true)
+  )
+)
+
+(define-private (update-event-tag-list (event-id uint) (tag-id uint))
+  (let ((existing-tags (get-event-tags event-id)))
+    (if (is-some existing-tags)
+      (let ((tag-list (unwrap-panic existing-tags)))
+        (map-set event-tag-list event-id {
+          tags: (unwrap-panic (as-max-len? (append (get tags tag-list) tag-id) u10)),
+          tag-count: (+ (get tag-count tag-list) u1),
+          last-tagged: stacks-block-height
+        })
+      )
+      (map-set event-tag-list event-id {
+        tags: (list tag-id),
+        tag-count: u1,
+        last-tagged: stacks-block-height
+      })
+    )
+  )
+)
+
+(define-private (update-tag-event-list (tag-id uint) (event-id uint))
+  (let ((existing-events (get-tag-events tag-id)))
+    (if (is-some existing-events)
+      (let ((event-list (unwrap-panic existing-events)))
+        (map-set tag-events tag-id {
+          event-ids: (unwrap-panic (as-max-len? (append (get event-ids event-list) event-id) u20)),
+          event-count: (+ (get event-count event-list) u1),
+          last-event: event-id
+        })
+      )
+      (map-set tag-events tag-id {
+        event-ids: (list event-id),
+        event-count: u1,
+        last-event: event-id
+      })
+    )
+  )
+)
+
+(define-public (untag-event (event-id uint) (tag-id uint))
+  (let ((event-tag-data (map-get? event-tags {event-id: event-id, tag-id: tag-id})))
+    (asserts! (is-some event-tag-data) ERR_NOT_FOUND)
+    (asserts! (is-eq (get tagged-by (unwrap-panic event-tag-data)) tx-sender) ERR_UNAUTHORIZED)
+    
+    (map-delete event-tags {event-id: event-id, tag-id: tag-id})
+    (ok true)
+  )
+)
+
+(define-public (update-tag (tag-id uint) (tag-color (string-ascii 20)) (description (string-ascii 200)))
+  (let ((tag-data (get-tag tag-id)))
+    (asserts! (is-some tag-data) ERR_TAG_NOT_FOUND)
+    (let ((tag (unwrap-panic tag-data)))
+      (asserts! (is-eq (get created-by tag) tx-sender) ERR_UNAUTHORIZED)
+      
+      (map-set tags tag-id (merge tag {
+        tag-color: tag-color,
+        description: description
+      }))
+      (ok true)
+    )
+  )
+)
+
+(define-public (deactivate-tag (tag-id uint))
+  (let ((tag-data (get-tag tag-id)))
+    (asserts! (is-some tag-data) ERR_TAG_NOT_FOUND)
+    (let ((tag (unwrap-panic tag-data)))
+      (asserts! (is-eq (get created-by tag) tx-sender) ERR_UNAUTHORIZED)
+      
+      (map-set tags tag-id (merge tag {active: false}))
+      (ok true)
+    )
+  )
+)
+
+(define-public (reactivate-tag (tag-id uint))
+  (let ((tag-data (get-tag tag-id)))
+    (asserts! (is-some tag-data) ERR_TAG_NOT_FOUND)
+    (let ((tag (unwrap-panic tag-data)))
+      (asserts! (is-eq (get created-by tag) tx-sender) ERR_UNAUTHORIZED)
+      
+      (map-set tags tag-id (merge tag {active: true}))
+      (ok true)
+    )
   )
 )

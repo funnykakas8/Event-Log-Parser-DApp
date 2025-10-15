@@ -17,6 +17,8 @@ A powerful Clarity smart contract for indexing, storing, and analyzing blockchai
 - **📈 Trend Analysis**: Historical data patterns and insights
 - **🛡️ Schema Validation**: Type-safe event validation with custom schemas
 - **✅ Data Quality**: Automatic validation and error tracking
+- **🏷️ Event Tagging**: Dynamic labeling and multi-dimensional organization
+- **🔍 Tag-based Search**: Advanced filtering and discovery by tags
 
 ## 🛠️ Installation
 
@@ -153,6 +155,34 @@ clarinet check
 (contract-call? .event-log-parser-depp toggle-schema-validation)
 ```
 
+### Tagging & Labels
+
+```clarity
+;; Create a custom tag
+(contract-call? .event-log-parser-depp create-tag 
+  "urgent" 
+  "red" 
+  "High priority events requiring immediate attention")
+
+;; Tag an event
+(contract-call? .event-log-parser-depp tag-event u1 u1 u5)
+
+;; Get event tags
+(contract-call? .event-log-parser-depp get-event-tags u1)
+
+;; Search events by tag
+(contract-call? .event-log-parser-depp search-events-by-tag u1)
+
+;; Get popular tags
+(contract-call? .event-log-parser-depp get-popular-tags u10)
+
+;; Get tag by name
+(contract-call? .event-log-parser-depp get-tag-by-name "urgent")
+
+;; Untag an event
+(contract-call? .event-log-parser-depp untag-event u1 u1)
+```
+
 ## 🏗️ Contract Architecture
 
 ### Data Structures
@@ -168,6 +198,9 @@ clarinet check
 - **📈 Trend Analysis Map**: Historical trend tracking and insights
 - **🛡️ Event Schemas Map**: Defines validation rules for event types
 - **✅ Schema Validations Map**: Tracks validation results and errors
+- **🏷️ Tags Map**: Custom labels with metadata and usage statistics
+- **🔗 Event-Tags Map**: Many-to-many relationships between events and tags
+- **📊 Tag Events Map**: Reverse lookup for finding tagged events
 
 ### Event Structure
 
@@ -239,6 +272,26 @@ clarinet test
 - **⚡ Runtime Toggle**: Enable/disable validation without downtime
 - **🎛️ Flexible Updates**: Modify constraints without recreation
 - **🗑️ Schema Cleanup**: Remove obsolete schemas safely
+
+## 🏷️ Dynamic Tagging System
+
+### 📌 Tag Creation & Management
+- **🎨 Custom Labels**: Create tags with names, colors, and descriptions
+- **👥 User Ownership**: Per-user tag creation and management
+- **📊 Usage Tracking**: Automatic counting of tag applications
+- **🔄 Tag Lifecycle**: Activate/deactivate tags without deletion
+
+### 🔗 Event Organization
+- **🎯 Multi-tagging**: Attach up to 10 tags per event
+- **⚖️ Weighted Tags**: Priority weights (1-5) for tag importance
+- **🔍 Tag Search**: Find all events with specific tags
+- **📈 Tag Analytics**: Track popular tags and usage patterns
+
+### 💡 Advanced Features
+- **🎨 Color Coding**: Visual organization with custom colors
+- **📝 Rich Descriptions**: Detailed tag documentation
+- **🚀 Popular Tags**: Discover trending labels
+- **🔎 Tag Discovery**: Find tags by name or browse all
 
 ## 🛡️ Security Features
 
